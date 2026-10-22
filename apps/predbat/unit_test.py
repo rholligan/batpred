@@ -128,7 +128,11 @@ from tests.test_hainterface_websocket import run_hainterface_websocket_tests
 from tests.test_history_chunking import run_history_chunking_tests
 from tests.test_web_if import run_test_web_if
 from tests.test_web_apps_edit import run_web_apps_edit_tests, run_web_apps_filter_tests
-from tests.test_web_chart_currency import test_rates_chart_series_names_use_currency_symbol, test_pv_chart_forecast_history_is_uncalibrated
+from tests.test_web_chart_currency import (
+    test_clipping_chart_tolerates_missing_history,
+    test_pv_chart_forecast_history_is_uncalibrated,
+    test_rates_chart_series_names_use_currency_symbol,
+)
 from tests.test_web_debug_history_routes import test_web_debug_history_routes
 from tests.test_agent_tools import run_agent_tools_tests
 from tests.test_chat_store import run_chat_store_tests
@@ -273,6 +277,7 @@ from tests.test_battery_curve_keys import run_battery_curve_keys_tests
 from tests.test_balance_inverters import run_balance_inverters_tests
 from tests.test_balance_pure import run_balance_pure_tests
 from tests.test_utils_allocate import run_allocate_export_tests
+from tests.test_utils import run_utils_tests
 from tests.test_octopus_download_rates import test_octopus_download_rates_wrapper
 from tests.test_integer_config import (
     test_integer_config_entities,
@@ -528,6 +533,7 @@ def main():
         ("fill_load_from_power", test_fill_load_from_power, "Fill load from power sensor tests", False),
         ("fill_load_from_history", test_fill_load_from_history, "Fill load_today gaps from load_energy_h0 history tests", False),
         ("fetch_pv_forecast", test_fetch_pv_forecast, "Fetch PV forecast with relative_time offset tests", False),
+        ("utils_tests", run_utils_tests, "Utils tests", False),
         # Octopus Energy URL/API tests
         ("octopus_url", test_octopus_url, "Octopus URL/API comprehensive tests (downloads, day/night rates, saving sessions, intelligent dispatch, tariffs, EDF)", False),
         ("octopus_cache", test_octopus_cache_wrapper, "Octopus cache save/load tests", False),
@@ -581,6 +587,7 @@ def main():
         ("web_apps_filter", run_web_apps_filter_tests, "Apps.yaml page filter box tests (issue #5210)", False),
         ("web_chart_currency", test_rates_chart_series_names_use_currency_symbol, "Rates chart series names follow currency_symbols tests", False),
         ("web_chart_pv_forecast", test_pv_chart_forecast_history_is_uncalibrated, "PV chart plots the uncalibrated forecast history tests", False),
+        ("web_chart_clipping_history", test_clipping_chart_tolerates_missing_history, "Clipping chart tolerates unavailable optional history", False),
         ("web_debug_history_routes", test_web_debug_history_routes, "Debug-history web routes tests (#4438 review items 4, 6, 21)", False),
         ("agent_tools", run_agent_tools_tests, "Shared agent tool layer and schema projection tests", False),
         ("chat_store", run_chat_store_tests, "Chat conversation store tests (expiry, deletion, LRU, trimming)", False),
