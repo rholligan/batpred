@@ -47,7 +47,7 @@ def _caller():
     code_line = test_line = None
     for frame in reversed(traceback.extract_stack()[:-3]):
         # Modules can load as tests/../deye.py, which is not a test
-        filename = os.path.normpath(frame.filename)
+        filename = os.path.normpath(frame.filename).replace("\\", "/")
         if "/apps/predbat/" not in filename or os.path.basename(filename) == "network_guard.py":
             continue
         where = "{}:{}".format(filename.split("/apps/predbat/")[-1], frame.lineno)
