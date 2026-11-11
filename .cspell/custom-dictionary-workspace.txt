@@ -50,6 +50,7 @@ automations
 autopep
 autoupdate
 ax1
+axisbelow
 axvline
 axvspan
 Backfeed
@@ -191,6 +192,7 @@ Eddi
 eddis
 edfenergy
 edfgb
+edgecolor
 efgh
 elif
 elinter
@@ -241,6 +243,7 @@ exog
 expmsg
 exportlimit
 exportvalue
+facecolor
 fdpwr
 fdsoc
 feedin
@@ -261,6 +264,7 @@ formmethod
 foxcloud
 foxess
 foxesscloud
+frameon
 freephase
 fromisoformat
 fronius
@@ -296,6 +300,7 @@ gridcharge
 gridcode
 gridconsumption
 gridconsumptionpower
+gridspec
 Groq
 growatt
 growattsph
@@ -471,6 +476,8 @@ nanstd
 nattribute
 nbytes
 ncalls
+ncol
+nearbyint
 nearr
 nemotron
 NESO
@@ -647,6 +654,7 @@ setpoints
 setstate
 SFMB
 sg05lp1
+sharex
 SIGALRM
 sigcloud
 sigen
@@ -703,6 +711,7 @@ substep
 sunspec
 sunsynk
 supabase
+suptitle
 suspendedev
 suspendedevse
 synkctl
@@ -826,7 +835,9 @@ yaxis
 yaxistooltip
 yday
 ylabel
+ylim
 YOURSERIAL
+yticks
 yuanzhi
 zappi
 zappis
