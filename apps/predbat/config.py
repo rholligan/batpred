@@ -2849,9 +2849,15 @@ SOLAX_SOLIS_MODES_FB00 = {
     "Feed-in priority": 96,
 }
 
+# Units of the CONFIG_ITEMS input_numbers that hold an amount of money in the minor currency unit.
+# Their min/max are multiplied by apps.yaml currency_scale so a currency with a much smaller minor
+# unit than the penny (e.g. CZK haléř, ~29 to 1p) can still set a meaningful threshold (#6155, #3683).
+CURRENCY_UNITS = ("p", "p/kWh", "p/kg")
+
 # Apps.yaml validation schema
 APPS_SCHEMA = {
     "currency_symbols": {"type": "string|string_list"},
+    "currency_scale": {"type": "float"},
     "db_enable": {"type": "boolean"},
     "db_days": {"type": "integer"},
     "db_mirror_ha": {"type": "boolean"},
@@ -2862,7 +2868,11 @@ APPS_SCHEMA = {
     "ha_url": {"type": "string", "empty": False},
     "ha_key": {"type": "string", "empty": False},
     "load_filter_threshold": {"type": "integer"},
+    "web_enable": {"type": "boolean"},
     "web_port": {"type": "integer"},
+    # WebInterface stringifies these, so an unquoted all-digit login (an int in YAML) is valid
+    "web_username": {"type": "string|integer"},
+    "web_password": {"type": "string|integer"},
     # The chat agent's LLM endpoint. Named chat_api_* rather than openrouter_* because the
     # endpoint no longer has to be OpenRouter: any OpenAI-compatible API works, including a local
     # Ollama. The openrouter_* names are still accepted so an existing apps.yaml keeps working.
@@ -3062,6 +3072,7 @@ APPS_SCHEMA = {
     "fox_auth_method": {"type": "string", "empty": False},
     "fox_token_expires_at": {"type": "string", "empty": False},
     "fox_token_hash": {"type": "string", "empty": False},
+    "fox_poll_seconds": {"type": "integer", "zero": False},
     "deye_key": {"type": "string", "empty": False},
     "deye_app_id": {"type": "string", "empty": False},
     "deye_app_secret": {"type": "string", "empty": False},

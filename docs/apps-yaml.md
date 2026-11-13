@@ -314,6 +314,24 @@ Sets your symbol to use for your main currency e.g. £, € or $ and for 1/100th
     - 'p'
 ```
 
+### currency_scale
+
+Optional, default 1. Predbat plans in your minor currency unit (pence, cents, øre, haléř...), and the ranges of its money settings,
+such as **input_number.predbat_metric_min_improvement_export**, were chosen in pence.
+If your minor unit is worth much less than a penny the top of those ranges can be too small to be a useful threshold,
+e.g. the 50 limit on the metric_min_improvement settings is only 0.50 CZK.
+
+Set `currency_scale` to roughly how many of your minor units make one penny, and the minimum and maximum of every setting measured in your minor unit
+(the `p`, `p/kWh` and `p/kg` settings) is multiplied by it when Predbat starts, e.g. for Czech koruna (about 29 haléř to the penny):
+
+```yaml
+  currency_scale: 29
+```
+
+Only the ranges change. The defaults and the values you have already set stay as they are, so you still need to raise the thresholds yourself
+to what suits you - multiplying the defaults by the same factor is a good starting point.
+Values below 1 are ignored, as they would narrow the ranges and cut back settings you have already made.
+
 ### template
 
 Initially set to `true`, this is used to stop Predbat from operating until you have finished configuring your `apps.yaml`.
@@ -430,6 +448,36 @@ Docker users can change the web port for the Predbat web interface by setting **
 ```yaml
   web_port: 5052
 ```
+
+If you do not use the web interface you can turn it off entirely by setting **web_enable** to `false`. Predbat then does not start the web server or open its port, so nothing on your network can reach it.
+
+```yaml
+  web_enable: false
+```
+
+- The default is `true`, and leaving it out keeps the web interface on.
+- With the web interface off the Predbat app's **Open Web UI** button and its Home Assistant sidebar panel stop working, as they open this same web interface. Remove the setting (or set it back to `true`) and restart Predbat to turn it on again.
+- The MCP server (`mcp_enable`) is separate and is not affected.
+
+To stop accidental changes to your settings from the web interface (for example from other devices on your network) you can set a username and password with **web_username** and **web_password**.
+It is best to keep the password in `secrets.yaml`:
+
+```yaml
+  web_username: admin
+  web_password: !secret web_password
+```
+
+When both are set the browser asks for a login before it will open the WhatIf, Chat, Settings (Apps, Config, Components, Editor) and Advanced (Discovery, Browse, Internals, Kraken API Key) pages, the debug and download pages, or save any change (plan and rate overrides, restarts and so on).
+The views that only show data (Dash, Metrics, Plan, Charts, Entities, Compare and Log) can still be opened without a login.
+There is a single login with no different levels of access.
+
+- The login is HTTP Basic authentication, which is not encrypted, so on a network you do not trust put the web interface behind an HTTPS reverse proxy.
+- The login stops unauthenticated access, such as other devices on your network or a vulnerability scanner. Once you have logged in your browser re-sends the credentials automatically, so a malicious web page you visit in the same browser could still submit a change (cross-site request forgery). Only a proxy with token-based authentication, or not exposing the web interface at all, closes that.
+- If only one of the two is set then every protected page is refused until you set the other.
+- Leave both unset (the default) for no login, which is what you need when using Predbat through Home Assistant ingress or behind your own authentication proxy.
+- The `/api/ping`, `/api/status`, `/api/state` (read), `/api/log`, `/api/entities` and `/metrics` data endpoints are not protected, nor is the `/images` route.
+- The `/api/login` request, used to set a session cookie when Predbat is behind a reverse proxy, is also not protected. It does not change any setting.
+- Pages added by plugins are only protected for changes (POST), not for viewing.
 
 ### notify_devices
 
@@ -1198,6 +1246,12 @@ The API times are UTC. Predbat converts the local planned windows on every apply
 The OpenAPI does not report the site's grid export cap. Set `export_limit` manually if the DNO cap is below the inverter's nominal rating.
 
 See [Components - Growatt OpenAPI](components.md#growatt-openapi-growatt) and [Growatt Cloud setup](inverter-setup.md#growatt-cloud-openapi).
+
+### Fox Cloud API
+
+Predbat can talk to Fox ESS inverters directly through the Fox Cloud API, configured with `fox_key` and the other `fox_` settings in `apps.yaml`.
+These include `fox_poll_seconds`, which sets how often the live data such as battery SoC is fetched (default `300`).
+See [Components - Fox ESS API](components.md#fox-ess-api-fox) for the full list of settings and what each one does.
 
 ### num_inverters
 
