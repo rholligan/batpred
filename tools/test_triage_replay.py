@@ -188,11 +188,13 @@ class BuildCommandTests(unittest.TestCase):
 
     def test_options(self):
         """until, simulate and each override reach the command line, with the JSON and chart in out/."""
+        debug_yaml = Path("/a/d.yaml")
+        replay_log = Path("/a/p.log")
         out = Path("/scratch/out")
-        cmd = triage_replay.build_command(Path("/a/d.yaml"), Path("/a/p.log"), out, until="06:00", simulate=True, overrides=["best_soc_keep=0.5", "set_reserve_min=10"])
+        cmd = triage_replay.build_command(debug_yaml, replay_log, out, until="06:00", simulate=True, overrides=["best_soc_keep=0.5", "set_reserve_min=10"])
         self.assertEqual(cmd[1], "../apps/predbat/unit_test.py")
-        self.assertEqual(cmd[cmd.index("--debug_file") + 1], "/a/d.yaml")
-        self.assertEqual(cmd[cmd.index("--replay_log") + 1], "/a/p.log")
+        self.assertEqual(cmd[cmd.index("--debug_file") + 1], str(debug_yaml))
+        self.assertEqual(cmd[cmd.index("--replay_log") + 1], str(replay_log))
         self.assertEqual(cmd[cmd.index("--replay_json") + 1], str(out / "replay.json"))
         self.assertEqual(cmd[cmd.index("--replay_chart") + 1], str(out / "replay.png"))
         self.assertEqual(cmd[cmd.index("--replay_until") + 1], "06:00")
