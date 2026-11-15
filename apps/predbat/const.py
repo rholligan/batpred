@@ -77,6 +77,13 @@ CLOUD_ARRAY_MARGIN = 1.2
 # the HA integrations). Treated as "unknown", not as a real 9999 kWp array.
 PV_ARRAY_KWP_UNKNOWN = 9999
 RUN_EVERY = 5
+# How far above the reserve (in %) an inverter that has no reserve register stops discharging in Demand
+# (reserve_via_discharge_rate). SoC is only read every RUN_EVERY minutes, so holding exactly at the reserve
+# would let the house load take the battery below it before the next cycle sees it (#5358).
+RESERVE_HOLD_MARGIN_PERCENT = 1
+# Once held, how much further the SoC must rise before the hold is released, so solar that only just
+# covers the load doesn't switch the discharge rate on and off every cycle.
+RESERVE_HOLD_HYSTERESIS_PERCENT = 1
 
 # Lowest rate (in the currency's 1/100 unit per kWh, e.g. p or c) a manual SoC target is penalised at:
 # the import rate below a manual_soc or alert floor, and the export rate above a manual_soc_max
@@ -128,6 +135,8 @@ INVERTER_CLOCK_SKEW_WARN_REPEAT_MINUTES = 60  # Minimum gap between repeats of t
 BATTERY_SIZE_RETRY_MINUTES = 60  # Gap between retries of a battery size estimate that found nothing today, so an overnight charge is used the same morning
 INVERTER_REST_TIMEOUT = 10  # Seconds to wait for a REST response before giving up (local network call, should be fast)
 INVERTER_QUICK_UPDATE_SECONDS = 60  # Minimum seconds between quick inverter data updates, also the balance re-apply interval
+BALANCE_CEILING_SHORTFALL_W = 100  # Grid shortfall (W) during a balancing hold that shows the peers are already giving all they can
+BALANCE_CEILING_EXPIRY_SECONDS = 30 * 60  # How long a learned balancing rate ceiling is trusted before the configured rate is tried again
 INVERTER_LIMIT_DEFAULT_W = 7500.0  # Standing inverter AC limit when the user has not configured inverter_limit
 EXPORT_LIMIT_DEFAULT_W = 99999.0  # Standing export limit when the user has not configured export_limit - effectively unlimited
 PREDBAT_MAX_CARS = 8  # Matches PK_MAX_CARS in prediction_kernel.cpp and the car_charging_rate/_1../_7 config items - the hard ceiling on num_cars
@@ -255,3 +264,6 @@ REPEAT_FULL_LOG_SECONDS = 3600
 
 # The default mcp_secret. It is published in the source and the docs, so the MCP server refuses to run with it (#5847)
 MCP_DEFAULT_SECRET = "predbat_mcp_secret"
+
+# Names of the temperature scales, after temperature_scale() has stripped degree marks and case
+TEMPERATURE_SCALES = {"c": "C", "celsius": "C", "f": "F", "fahrenheit": "F", "k": "K", "kelvin": "K"}

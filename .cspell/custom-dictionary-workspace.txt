@@ -713,6 +713,7 @@ sunspec
 sunsynk
 supabase
 suptitle
+surrogatepass
 suspendedev
 suspendedevse
 synkctl

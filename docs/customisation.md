@@ -376,7 +376,7 @@ The default of 24 hours is the recommended value (to match energy rate cycles). 
 When turned Off, any forced export that occurs while solar power is being generated will be scored against `metric_keep` (as if that solar energy had to be re-imported), making those export slots far less attractive to the optimiser.
 This prevents Predbat from planning unnecessary forced exports during sunny periods, since the PV output would be exported anyway without requiring the battery to discharge.
 
-**switch.predbat_set_discharge_during_charge** - When turned On disables inverter discharge during charge slots, useful for multi-inverter setups to avoid cross-charging when batteries are out of balance. Default is On.
+**switch.predbat_set_discharge_during_charge** - When turned On the battery may discharge to cover the house during a charge slot while it is above the slot's target. When turned Off, discharge is disabled during charge slots, which is useful for multi-inverter setups to avoid cross-charging when batteries are out of balance. Default is On.
 
 **switch.predbat_inverter_set_charge_before** - (_expert_mode_) When turned On (the default), charge slots will be programmed before their start time, when Off they will only be configured when the charging time starts.
 
@@ -633,6 +633,28 @@ Turn On **switch.predbat_balance_inverters_enable** to enable this feature. It i
 
 Equal SoC across the batteries is not in itself worth much, which is why the two SoC balancing switches are
 off by default. They remain fully functional if you want them.
+
+Once the cross-charge correction has stopped a battery charging from the others, it keeps that battery's charge
+held while the batteries are still discharging, so you may see its charge rate stay at 0 through the evening.
+Releasing it every minute would only let the battery's own control loop wind straight back into charging from
+its neighbours. The hold ends as soon as the batteries should be charging again (spare solar, or a charge slot) or
+stop discharging. The same applies the other way round, while the batteries soak up a solar surplus of at least
+1kW.
+
+If you turn on either SoC balancing switch, leave **switch.predbat_balance_inverters_crosscharge** on as well. SoC
+balancing holds one battery's charge (or discharge) back while the others carry on. Under broken cloud, when your
+solar is close to your house load, the site keeps tipping between surplus and deficit faster than Predbat's
+once-a-minute balancing pass. A battery held from charging then discharges into the others' charging whenever a
+cloud passes. The cross-charge correction is what stops that.
+
+Balancing only holds a battery back when the others can cover for it. It judges that from each inverter's
+charge and discharge rate, but a battery can deliver much less than its rate: when it is cold, when its BMS
+limits it, or when its inverter's AC limit is lower than Predbat was told. If a hold leaves the house importing
+(or leaves PV surplus going to the grid while charging), the batteries still running must already be giving all
+they can. Predbat records what each of them was delivering at that moment and uses it in place of its rate,
+so it releases the hold on the next pass and does not take it again while that battery cannot cover the house.
+A recorded limit is forgotten as soon as the battery delivers more, or after 30 minutes, so a battery that has
+warmed up gets its full rate back.
 
 ## Freeze Export during Demand
 
