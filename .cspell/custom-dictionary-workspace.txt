@@ -748,6 +748,8 @@ thirdparty
 threadpool
 threadpoolctl
 tickfont
+ticktext
+tickvals
 timea
 timeb
 timec
@@ -851,6 +853,7 @@ xrtkq
 xtest
 xticks
 xxabcdefyy
+yanchor
 yaxis
 yaxistooltip
 yday
@@ -863,5 +866,6 @@ zappi
 zappis
 zaxis
 zcat
+zeroline
 zigbee
 zoneinfo
