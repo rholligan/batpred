@@ -40,7 +40,7 @@ from const import (
     PV_CALIBRATION_LOAD_ATTEMPTS,
     PV_CALIBRATION_LOAD_WAIT_MINUTES,
 )
-from pv_calibration import band_scaling, clean_pv_calibration_evidence, evidence_peak_kw, fit_pv_calibration, merge_pv_calibration_evidence, pv_calibration_scan_length, pv_day
+from pv_calibration import band_scaling, clean_pv_calibration_evidence, evidence_peak_kw, fit_pv_calibration, merge_pv_calibration_evidence, pv_calibration_scan_length, pv_day, slot_actual
 from utils import dp2, dp4, history_attribute_to_minute_data, minute_data, history_attribute, prune_today, str2time, strptime_aware
 from predbat_metrics import record_api_call, metrics
 from component_base import ComponentBase
@@ -1740,6 +1740,20 @@ class SolarAPI(ComponentBase):
             pv_value = pv_forecast_minute.get(minute, 0)
             slot = (int(minute / self.plan_interval_minutes) * self.plan_interval_minutes) % (24 * 60)
             pv_forecast_minute_adjusted[minute] = pv_value * slot_adjustment.get(slot, 1.0) * use_scaling_day
+
+        pv_power_hist_by_slot = {}
+        pv_power_hist_counts = {}
+        if evidence:
+            for record in evidence.values():
+                slots = record.get("slots", {})
+                for slot_min, pair in slots.items():
+                    act_kwh = slot_actual(pair, self.pv_scaling)
+                    act_kw = act_kwh * 60.0 / self.plan_interval_minutes
+                    pv_power_hist_by_slot[slot_min] = pv_power_hist_by_slot.get(slot_min, 0.0) + act_kw
+                    pv_power_hist_counts[slot_min] = pv_power_hist_counts.get(slot_min, 0) + 1
+            for slot_min in pv_power_hist_by_slot:
+                if pv_power_hist_counts[slot_min] > 0:
+                    pv_power_hist_by_slot[slot_min] = dp4(pv_power_hist_by_slot[slot_min] / pv_power_hist_counts[slot_min])
 
         pv_estimateCL = {}
         pv_estimate10 = {}
