@@ -1244,9 +1244,15 @@ class Plan:
         enable_coarse_fine=True,
         best_max_charge_slots=1,
         best_max_export_slots=1,
+        block_replay=True,
+        replay_stats=None,
     ):
         """
         Pick an import price threshold which gives the best results
+
+        block_replay=False rebuilds every threshold block instead of replaying a repeated one from
+        tried_list - the result is the same, it only exists so tests can compare the two. When
+        replay_stats is a dict, its 'replayed_blocks' is set to how many blocks this call replayed.
         """
         loop_price = price_set[-1]
         best_price = loop_price
@@ -1380,6 +1386,9 @@ class Plan:
         # for 221 distinct answers. Only the collision itself is cached - the limit that follows from it
         # depends on charge_mods/best_limits_reset and changes from trial to trial.
         hit_charge_cache = {}
+        block_cache = {}  # trial block signature -> hashes of the trials it built
+        replayed_blocks = 0
+        prunable_hit_cache = {}  # window_n -> charge window it may be pruned against, or -1
         hit_car_cache = {}  # (start, end) -> does this window hit a car charging slot
         export_allowed_cache = {}  # window_n -> is this export window usable at all
 
@@ -1426,6 +1435,7 @@ class Plan:
             export_candidates = {}
             charge_selection_cache = {}
             export_selection_cache = {}
+            prune_cache = {}
 
             def charge_candidates_for(allow_freeze, loop_price=loop_price):
                 """Every charge window this price threshold makes available, uncapped"""
@@ -1450,7 +1460,9 @@ class Plan:
                 entry = charge_selection_cache.get((count, allow_freeze))
                 if entry is None:
                     taken = candidates[:count]
-                    entry = ([window_n for window_n, _ in taken], dict(taken))
+                    # The third element is this selection's summed hash delta: the scenario hash is a sum
+                    # of integers, so it can be accumulated per side once rather than per trial
+                    entry = ([window_n for window_n, _ in taken], dict(taken), sum(charge_hash_delta[window_n][freeze] for window_n, freeze in taken))
                     charge_selection_cache[(count, allow_freeze)] = entry
                 return entry
 
@@ -1461,7 +1473,7 @@ class Plan:
                 entry = export_selection_cache.get((count, allow_freeze))
                 if entry is None:
                     taken = candidates[:count]
-                    entry = ([window_n for window_n, _ in taken], dict(taken))
+                    entry = ([window_n for window_n, _ in taken], dict(taken), sum(export_hash_delta[window_n][freeze] for window_n, freeze in taken))
                     export_selection_cache[(count, allow_freeze)] = entry
                 return entry
 
@@ -1495,52 +1507,89 @@ class Plan:
                 charge_trials = distinct_slot_trials(charge_slot_choices, {freeze: len(charge_candidates_for(freeze)) for freeze in charge_freeze_options})
                 export_trials = distinct_slot_trials(export_slot_choices, {freeze: len(export_candidates_for(freeze)) for freeze in export_freeze_options})
 
-                for max_charge_slots, charge_freeze_trials in charge_trials:
-                    for max_export_slots, export_freeze_trials in export_trials:
-                        for try_charge_freeze in charge_freeze_trials:
-                            for try_export_freeze in export_freeze_trials:
-                                # all_n is copied into pred_item below and charge_mods is only ever read,
-                                # so both cached objects can be shared between trials as they stand. The
-                                # export pair can be pruned just below, so it is copied on write.
-                                all_n, charge_mods = charge_selection_for(max_charge_slots, try_charge_freeze)
-                                all_d, export_mods = export_selection_for(max_export_slots, try_export_freeze)
+                # A threshold whose candidate windows (and slot ladders) match an earlier threshold's in this
+                # call builds exactly the same trials, every one of them already in tried_list. All the sweep
+                # would do for it is fold those trials' metrics into levels_score for this threshold, so do
+                # just that from the hashes recorded for the first occurrence. This is common in the region
+                # passes, where windows outside the region still contribute thresholds but no candidates.
+                block_hashes = []
+                if block_replay:
+                    block_key = (
+                        coarse,
+                        tuple(charge_slot_choices),
+                        tuple(export_slot_choices),
+                        tuple(tuple(charge_candidates_for(freeze)) for freeze in charge_freeze_options),
+                        tuple(tuple(export_candidates_for(freeze)) for freeze in export_freeze_options),
+                    )
+                    replay_hashes = block_cache.get(block_key)
+                    if replay_hashes is not None:
+                        replayed_blocks += 1
+                        # Every hash was resolved when its block's pred_table was drained, so none should
+                        # still be a pending True; skip one anyway, as the rebuild path does
+                        replay_metrics = [tried_list[block_hash] for block_hash in replay_hashes if tried_list[block_hash] is not True]
+                        if replay_metrics:
+                            levels_score[loop_price] = min(levels_score.get(loop_price, 9999999), min(replay_metrics))
+                        continue
+                    block_cache[block_key] = block_hashes
+
+                # Every selection is looked up once per side up front instead of once per trial, and the
+                # export-on-charge pruning, which depends only on the pair of selections, is memoised per pair
+                charge_entries = [(max_charge_slots, [(try_charge_freeze, charge_selection_for(max_charge_slots, try_charge_freeze)) for try_charge_freeze in charge_freeze_trials]) for max_charge_slots, charge_freeze_trials in charge_trials]
+                export_entries = [(max_export_slots, [export_selection_for(max_export_slots, try_export_freeze) for try_export_freeze in export_freeze_trials]) for max_export_slots, export_freeze_trials in export_trials]
+                prune_export = not self.calculate_export_oncharge
+                for max_charge_slots, charge_side in charge_entries:
+                    for max_export_slots, export_side in export_entries:
+                        for try_charge_freeze, charge_entry in charge_side:
+                            all_n, charge_mods, charge_hash = charge_entry
+                            for export_entry in export_side:
+                                all_d, export_mods, export_hash = export_entry
 
                                 # Remove export hitting charge windows if this is disabled
-                                if not self.calculate_export_oncharge:
-                                    pruned_all_d = None
-                                    pruned_export_mods = None
-                                    for window_n in all_d:
-                                        hit_charge = hit_charge_cache.get(window_n)
-                                        if hit_charge is None:
-                                            hit_charge = self.hit_charge_window(self.charge_window_best, export_window[window_n]["start"], export_window[window_n]["end"])
-                                            hit_charge_cache[window_n] = hit_charge
-                                        if hit_charge >= 0:
-                                            if hit_charge in charge_mods:
-                                                if not charge_mods[hit_charge] and "clipping_target_soc_pct" in charge_window[hit_charge]:
-                                                    hit_charge_limit = (charge_window[hit_charge]["clipping_target_soc_pct"] / 100.0) * self.soc_max
-                                                else:
-                                                    hit_charge_limit = self.reserve if charge_mods[hit_charge] else self.soc_max
-                                            else:
-                                                hit_charge_limit = best_limits_reset[hit_charge]
-                                            if hit_charge_limit > 0.0:
+                                if prune_export:
+                                    # Both entries live in this threshold's selection caches, as long as prune_cache
+                                    # does, so their ids identify the pair
+                                    pair_key = (id(charge_entry), id(export_entry))
+                                    pruned = prune_cache.get(pair_key)
+                                    if pruned is None:
+                                        pruned_export_mods = None
+                                        pruned_hash = export_hash
+                                        # Which export windows can be pruned at all, and against which charge window, is
+                                        # geometric and so fixed per window; only the hit charge window's limit varies per pair
+                                        for window_n in all_d:
+                                            hit_charge = prunable_hit_cache.get(window_n)
+                                            if hit_charge is None:
+                                                hit_charge = hit_charge_cache.get(window_n)
+                                                if hit_charge is None:
+                                                    hit_charge = self.hit_charge_window(self.charge_window_best, export_window[window_n]["start"], export_window[window_n]["end"])
+                                                    hit_charge_cache[window_n] = hit_charge
                                                 # Only remove if it doesn't remove the charge window entirely
-                                                if not (export_window[window_n]["start"] <= self.charge_window_best[hit_charge]["start"] and export_window[window_n]["end"] >= self.charge_window_best[hit_charge]["end"]):
+                                                if hit_charge >= 0 and export_window[window_n]["start"] <= self.charge_window_best[hit_charge]["start"] and export_window[window_n]["end"] >= self.charge_window_best[hit_charge]["end"]:
+                                                    hit_charge = -1
+                                                prunable_hit_cache[window_n] = hit_charge
+                                            if hit_charge >= 0:
+                                                if hit_charge in charge_mods:
+                                                    if not charge_mods[hit_charge] and "clipping_target_soc_pct" in charge_window[hit_charge]:
+                                                        hit_charge_limit = (charge_window[hit_charge]["clipping_target_soc_pct"] / 100.0) * self.soc_max
+                                                    else:
+                                                        hit_charge_limit = self.reserve if charge_mods[hit_charge] else self.soc_max
+                                                else:
+                                                    hit_charge_limit = best_limits_reset[hit_charge]
+                                                if hit_charge_limit > 0.0:
                                                     # Dropping the modification restores the reset value (100.0) for this window
-                                                    if pruned_all_d is None:
-                                                        pruned_all_d = all_d[:]
+                                                    if pruned_export_mods is None:
                                                         pruned_export_mods = dict(export_mods)
-                                                    pruned_export_mods.pop(window_n, None)
-                                                    pruned_all_d.remove(window_n)
-                                    if pruned_all_d is not None:
-                                        all_d = pruned_all_d
-                                        export_mods = pruned_export_mods
+                                                    if window_n in pruned_export_mods:
+                                                        pruned_hash -= export_hash_delta[window_n][pruned_export_mods.pop(window_n)]
+                                        if pruned_export_mods is None:
+                                            pruned = (export_mods, export_hash)
+                                        else:
+                                            pruned = (pruned_export_mods, pruned_hash)
+                                        prune_cache[pair_key] = pruned
+                                    export_mods, export_hash = pruned
 
                                 # Skip this one as it's the same as selected already
-                                try_hash = reset_sum
-                                for window_n, freeze in charge_mods.items():
-                                    try_hash += charge_hash_delta[window_n][freeze]
-                                for window_n, freeze in export_mods.items():
-                                    try_hash += export_hash_delta[window_n][freeze]
+                                try_hash = reset_sum + charge_hash + export_hash
+                                block_hashes.append(try_hash)
                                 if try_hash in tried_list:
                                     try_value = tried_list[try_hash]
                                     if try_value is not True:
@@ -1682,6 +1731,9 @@ class Plan:
                     best_export_limits,
                 )
             )
+
+        if replay_stats is not None:
+            replay_stats["replayed_blocks"] = replayed_blocks
 
         # Perform charge limit levelling on best_all_n
         if best_all_n:
@@ -5342,7 +5394,12 @@ class Plan:
                                 orig_length_target,
                             )
                         )
-                    # Try to swap into the target slot
+                    # Try to swap into the target slot. A swap that is not kept is undone, so every
+                    # partner is tried against the same plan: build each on its own copy of the limits
+                    # and of the two windows it moves, queue them all as one batch, then read the results
+                    # in partner order and keep the first that passes - the swap a one-at-a-time search
+                    # would have stopped at.
+                    trials = []
                     for window_n in range(max(window_n_target - 32, 0), max(window_n_target, 0), 1):
                         previous_end = 0
                         if window_n > 0:
@@ -5370,13 +5427,15 @@ class Plan:
                             if not self.allow_this_export_window(window_n_target):
                                 continue
 
+                            window_end = self.export_window_best[window_n]["end"]
+                            window_end_target = self.export_window_best[window_n_target]["end"]
                             is_combined = False
                             if export_mode_of(export_limit_target) == EXPORT_MODE_TARGET and (window_length_target + window_length) <= orig_length_target:
                                 # Full combine
-                                self.export_limits_best[window_n] = pack_export_limit(EXPORT_MODE_IDLE)
-                                set_window_start(self.export_window_best[window_n], window_start_orig)
-                                self.export_limits_best[window_n_target] = export_limit
-                                set_window_start(self.export_window_best[window_n_target], self.export_window_best[window_n_target]["end"] - (window_length + window_length_target))
+                                limit_new = pack_export_limit(EXPORT_MODE_IDLE)
+                                start_new = window_start_orig
+                                limit_target_new = export_limit
+                                start_target_new = window_end_target - (window_length + window_length_target)
                                 is_combined = True
                             elif export_mode_of(export_limit_target) == EXPORT_MODE_TARGET and window_length_target < orig_length_target:
                                 # Partial combine - move export time from this window into the target, so
@@ -5385,10 +5444,10 @@ class Plan:
                                 amount_to_move = min(orig_length_target - window_length_target, window_length)
                                 window_length_target_new = amount_to_move + window_length_target
                                 window_length_new = window_length - amount_to_move
-                                self.export_limits_best[window_n] = min(export_limit, export_limit_target, key=export_limit_sort_key)
-                                set_window_start(self.export_window_best[window_n], self.export_window_best[window_n]["end"] - window_length_new)
-                                set_window_start(self.export_window_best[window_n_target], self.export_window_best[window_n_target]["end"] - window_length_target_new)
-                                self.export_limits_best[window_n_target] = min(export_limit, export_limit_target, key=export_limit_sort_key)
+                                limit_new = min(export_limit, export_limit_target, key=export_limit_sort_key)
+                                start_new = window_end - window_length_new
+                                start_target_new = window_end_target - window_length_target_new
+                                limit_target_new = limit_new
                                 is_combined = True
                             else:
                                 # Swap
@@ -5397,34 +5456,67 @@ class Plan:
                                     continue
 
                                 # Set the current window to off and optimise the swap window
-                                self.export_limits_best[window_n] = export_limit_target
-                                set_window_start(self.export_window_best[window_n], max(self.export_window_best[window_n]["end"] - window_length_target, previous_end))
-                                self.export_limits_best[window_n_target] = export_limit
-                                set_window_start(self.export_window_best[window_n_target], max(self.export_window_best[window_n_target]["end"] - window_length, previous_end_target))
+                                limit_new = export_limit_target
+                                start_new = max(window_end - window_length_target, previous_end)
+                                limit_target_new = export_limit
+                                start_target_new = max(window_end_target - window_length, previous_end_target)
 
-                            best_metric, best_battery_value, best_cost, best_keep, best_cycle, best_carbon, best_import, best_export = self.run_prediction_metric(
-                                self.charge_limit_best, self.charge_window_best, self.export_window_best, self.export_limits_best, end_record=self.end_record
+                            try_export_limits = self.export_limits_best.copy()
+                            try_export_limits[window_n] = limit_new
+                            try_export_limits[window_n_target] = limit_target_new
+                            try_export_window = self.export_window_best.copy()
+                            try_export_window[window_n] = dict(self.export_window_best[window_n], start=start_new)
+                            try_export_window[window_n_target] = dict(self.export_window_best[window_n_target], start=start_target_new)
+                            handles = self.launch_run_prediction_metric(self.charge_limit_best, self.charge_window_best, try_export_window, try_export_limits, self.end_record)
+                            trials.append((window_n, previous_end, window_length, export_limit, is_combined, limit_new, start_new, limit_target_new, start_target_new, handles))
+
+                    for window_n, previous_end, window_length, export_limit, is_combined, limit_new, start_new, limit_target_new, start_target_new, handles in trials:
+                        best_metric, best_battery_value, best_cost, best_keep, best_cycle, best_carbon, best_import, best_export = self.get_run_prediction_metric(handles)
+
+                        if self.debug_enable:
+                            self.log(
+                                "Try to swap export combine {} window {} {}-{} previous end {} window_length {} limit {} with {} => {}-{} previous_end_target {} length_target {} limit_target {} metric {} (current best {}) cost {} keep {} cycle {} carbon {} import {}".format(
+                                    is_combined,
+                                    window_n,
+                                    self.time_abs_str(start_new),
+                                    self.time_abs_str(self.export_window_best[window_n]["end"]),
+                                    self.time_abs_str(previous_end),
+                                    window_length,
+                                    export_limit,
+                                    window_n_target,
+                                    self.time_abs_str(start_target_new),
+                                    self.time_abs_str(self.export_window_best[window_n_target]["end"]),
+                                    self.time_abs_str(previous_end_target),
+                                    window_length_target,
+                                    export_limit_target,
+                                    best_metric,
+                                    dp2(selected_metric),
+                                    dp2(best_cost),
+                                    dp2(best_keep),
+                                    dp2(best_cycle),
+                                    dp0(best_carbon),
+                                    dp2(best_import),
+                                )
                             )
 
+                        if ((selected_metric - best_metric) >= self.metric_min_improvement_swap) and (best_metric <= selected_metric or ((export_mode_of(export_limit_target) == EXPORT_MODE_IDLE or is_combined))):
                             if self.debug_enable:
                                 self.log(
-                                    "Try to swap export combine {} window {} {}-{} previous end {} window_length {} limit {} with {} => {}-{} previous_end_target {} length_target {} limit_target {} metric {} (current best {}) cost {} keep {} cycle {} carbon {} import {}".format(
-                                        is_combined,
+                                    "Swap export window {} {}-{} limit {} with {} => {}-{} metric {}{}, selected_metric {}{}, min_improvement_swap {}, cost {}{}, keep {}kWh, cycle {}kWh, carbon {}kg, import {}kWh".format(
                                         window_n,
-                                        self.time_abs_str(self.export_window_best[window_n]["start"]),
+                                        self.time_abs_str(start_new),
                                         self.time_abs_str(self.export_window_best[window_n]["end"]),
-                                        self.time_abs_str(previous_end),
-                                        window_length,
                                         export_limit,
                                         window_n_target,
-                                        self.time_abs_str(self.export_window_best[window_n_target]["start"]),
+                                        self.time_abs_str(start_target_new),
                                         self.time_abs_str(self.export_window_best[window_n_target]["end"]),
-                                        self.time_abs_str(previous_end_target),
-                                        window_length_target,
-                                        export_limit_target,
                                         best_metric,
-                                        dp2(selected_metric),
+                                        curr,
+                                        selected_metric,
+                                        curr,
+                                        self.metric_min_improvement_swap,
                                         dp2(best_cost),
+                                        curr,
                                         dp2(best_keep),
                                         dp2(best_cycle),
                                         dp0(best_carbon),
@@ -5432,48 +5524,23 @@ class Plan:
                                     )
                                 )
 
-                            if ((selected_metric - best_metric) >= self.metric_min_improvement_swap) and (best_metric <= selected_metric or ((export_mode_of(export_limit_target) == EXPORT_MODE_IDLE or is_combined))):
-                                if self.debug_enable:
-                                    self.log(
-                                        "Swap export window {} {}-{} limit {} with {} => {}-{} metric {}{}, selected_metric {}{}, min_improvement_swap {}, cost {}{}, keep {}kWh, cycle {}kWh, carbon {}kg, import {}kWh".format(
-                                            window_n,
-                                            self.time_abs_str(self.export_window_best[window_n]["start"]),
-                                            self.time_abs_str(self.export_window_best[window_n]["end"]),
-                                            export_limit,
-                                            window_n_target,
-                                            self.time_abs_str(self.export_window_best[window_n_target]["start"]),
-                                            self.time_abs_str(self.export_window_best[window_n_target]["end"]),
-                                            best_metric,
-                                            curr,
-                                            selected_metric,
-                                            curr,
-                                            self.metric_min_improvement_swap,
-                                            dp2(best_cost),
-                                            curr,
-                                            dp2(best_keep),
-                                            dp2(best_cycle),
-                                            dp0(best_carbon),
-                                            dp2(best_import),
-                                        )
-                                    )
+                            # Apply the kept swap to the plan
+                            self.export_limits_best[window_n] = limit_new
+                            set_window_start(self.export_window_best[window_n], start_new)
+                            self.export_limits_best[window_n_target] = limit_target_new
+                            set_window_start(self.export_window_best[window_n_target], start_target_new)
 
-                                # Update best
-                                selected_metric = best_metric
-                                selected_battery_value = best_battery_value
-                                selected_cost = best_cost
-                                selected_keep = best_keep
-                                selected_cycle = best_cycle
-                                selected_carbon = best_carbon
-                                selected_import = best_import
-                                swapped = True
-                                swapped_target[window_n_target] = True
-                                break
-                            else:
-                                # Revert the change
-                                self.export_limits_best[window_n] = export_limit
-                                set_window_start(self.export_window_best[window_n], window_start)
-                                self.export_limits_best[window_n_target] = export_limit_target
-                                set_window_start(self.export_window_best[window_n_target], window_start_target)
+                            # Update best
+                            selected_metric = best_metric
+                            selected_battery_value = best_battery_value
+                            selected_cost = best_cost
+                            selected_keep = best_keep
+                            selected_cycle = best_cycle
+                            selected_carbon = best_carbon
+                            selected_import = best_import
+                            swapped = True
+                            swapped_target[window_n_target] = True
+                            break
 
             self.log(
                 "Swap export optimisation finished metric {}{}, cost {}{}, metric_keep {}kWh, cycle {}kWh, carbon {}kg, import {}kWh".format(
